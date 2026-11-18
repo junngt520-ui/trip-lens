@@ -46,6 +46,19 @@ nav.tabs .pill{position:absolute;top:4px;bottom:4px;left:0;border-radius:999px;b
 #tip{position:fixed;z-index:4;pointer-events:none;font-family:'IBM Plex Mono',monospace;font-size:11px;padding:5px 9px;border-radius:8px;background:rgba(18,18,24,.88);border:1px solid var(--line);opacity:0;transition:opacity .15s;white-space:nowrap}
 #toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 86px);transform:translate(-50%,8px);z-index:7;font-size:13px;line-height:1.7;padding:10px 16px;border-radius:12px;background:rgba(22,22,28,.92);border:1px solid var(--line);opacity:0;pointer-events:none;transition:opacity .3s,transform .3s;max-width:90vw;text-align:center}
 #toast.on{opacity:1;transform:translate(-50%,0)}
+#tzp{position:fixed;inset:0;z-index:8;background:rgba(6,6,9,.6);display:flex;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .3s}
+#tzp.on{opacity:1;pointer-events:auto}
+#tzp .card{width:min(460px,92vw);max-height:80vh;overflow:auto;background:#16161c;border:1px solid var(--line);border-radius:18px;padding:18px 18px 8px;transform:translateY(10px);transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+#tzp.on .card{transform:none}
+#tzp .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+#tzp .hd b{font-weight:500;font-size:16px;letter-spacing:.06em}
+#tzp .note{font-size:12px;color:var(--dim);line-height:1.7;margin:4px 0 14px}
+#tzp .row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px;padding:10px 0;border-top:1px solid var(--line)}
+#tzp .cam{padding:12px 0;border-top:1px solid var(--line)}
+#tzp .cam .nm{font-size:14px}#tzp .cam .sub{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--dim);margin:3px 0 8px}
+#tzp .cam .ctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px;color:var(--dim)}
+#tzp select,#tzp input{font:inherit;font-size:13px;color:var(--fg);background:#0e0e13;border:1px solid var(--line);border-radius:8px;padding:6px 8px}
+#tzp input{width:72px;font-family:'IBM Plex Mono',monospace}
 #lb{position:fixed;inset:0;z-index:8;background:rgba(6,6,9,.92);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0;pointer-events:none;transition:opacity .35s}
 #lb.on{opacity:1;pointer-events:auto}
 #lb img{max-width:92vw;max-height:72vh;border-radius:6px;box-shadow:0 30px 80px rgba(0,0,0,.6);transform:scale(.96);transition:transform .45s cubic-bezier(.2,.8,.2,1)}
@@ -62,7 +75,7 @@ nav.tabs .pill{position:absolute;top:4px;bottom:4px;left:0;border-radius:999px;b
   header{flex-direction:column}
   .actions{position:fixed;top:calc(env(safe-area-inset-top) + 12px);right:14px}
   .btn{padding:7px 12px;font-size:12px}
-  .brand h1,.brand .stats{padding-right:118px}
+  .brand h1,.brand .stats{padding-right:196px}
   nav.tabs button{padding:10px 18px;font-size:13px}
   .hint{display:none}
 }
@@ -79,6 +92,7 @@ nav.tabs .pill{position:absolute;top:4px;bottom:4px;left:0;border-radius:999px;b
   </div>
   <div class="actions" id="actions" style="display:none">
     <label class="btn" for="file">＋ 写真</label>
+    <button class="btn" id="tzBtn">時刻補正</button>
     <button class="btn" id="reset" title="表示をリセット">⤢</button>
   </div>
 </header>
@@ -107,6 +121,12 @@ nav.tabs .pill{position:absolute;top:4px;bottom:4px;left:0;border-radius:999px;b
 <div id="drop">ここにドロップ</div>
 <div id="tip"></div>
 <div id="toast"></div>
+<div id="tzp"><div class="card">
+  <div class="hd"><b>時刻の補正</b><button class="btn" id="tzClose">閉じる</button></div>
+  <p class="note">カメラの時計がどのタイムゾーンに合っていたかを選ぶと、すべての写真を同じ時間軸に並べ直します。iPhoneは撮影地の時刻を自動で記録しています。</p>
+  <label class="row"><span>表示するタイムゾーン</span><select id="dispTz"></select></label>
+  <div id="camList"></div>
+</div></div>
 <div id="lb">
   <button class="btn x" id="lbx">閉じる</button>
   <button class="btn nav prev" id="lbp">‹</button>
@@ -122,7 +142,7 @@ const $=s=>document.querySelector(s);
 const cv=$('#c'), ctx=cv.getContext('2d',{willReadFrequently:true});
 let W=0,H=0,dpr=1;
 const TH=56; // thumbnail px
-const S={items:[],view:'time',ov:{time:0,color:0,map:0},layout:{},cam:{k:1,ox:0,oy:0},camT:null,hover:null,raf:0,demo:false};
+const S={items:[],view:'time',ov:{time:0,color:0,map:0},layout:{},cam:{k:1,ox:0,oy:0},camT:null,hover:null,raf:0,demo:false,cams:{},dispTz:null,dispTzUser:false,seen:new Set()};
 const WD='日月火水木金土';
 const pad=n=>String(n).padStart(2,'0');
 const D=t=>new Date(t);
@@ -173,7 +193,7 @@ function readTiff(v,t,out){
   const rats=en=>{const o=u32(en.e+8),r=[];for(let i=0;i<en.cnt;i++){const a=u32(o+i*8),b=u32(o+i*8+4);r.push(b?a/b:0)}return r};
   const i0=ifd(u32(4));
   try{if(i0[0x010F])out.make=ascii(i0[0x010F]);if(i0[0x0110])out.model=ascii(i0[0x0110]);if(i0[0x0132])out.dt=ascii(i0[0x0132])}catch(e){}
-  try{if(i0[0x8769]){const ex=ifd(u32(i0[0x8769].e+8));if(ex[0x9003])out.dto=ascii(ex[0x9003])}}catch(e){}
+  try{if(i0[0x8769]){const ex=ifd(u32(i0[0x8769].e+8));if(ex[0x9003])out.dto=ascii(ex[0x9003]);const o=ex[0x9011]||ex[0x9010];if(o)out.off=ascii(o)}}catch(e){}
   try{if(i0[0x8825]){const g=ifd(u32(i0[0x8825].e+8));if(g[2]&&g[4]){const a=rats(g[2]),b=rats(g[4]);
     let lat=a[0]+(a[1]||0)/60+(a[2]||0)/3600,lon=b[0]+(b[1]||0)/60+(b[2]||0)/3600;
     if(g[1]&&ascii(g[1])==='S')lat=-lat;if(g[3]&&ascii(g[3])==='W')lon=-lon;
@@ -198,13 +218,46 @@ async function decode(file){
 let uid=0;
 async function processFile(f){
   const ex=parseExif(await f.slice(0,256*1024).arrayBuffer());
+  const model=[ex.make,ex.model].filter(Boolean).join(' ').replace(/^(\w+) \1/,'$1');
+  const key=(ex.dto?`${ex.dto}|${model}`:f.name.replace(/\(\d+\)(?=\.\w+$)/,''))+'|'+f.size;
+  if(S.seen.has(key))return null;S.seen.add(key);
   const bmp=await decode(f);const w=bmp.width||bmp.naturalWidth,h=bmp.height||bmp.naturalHeight;
   const thumb=makeThumb(bmp,w,h);if(bmp.close)bmp.close();
-  let t=exifTime(ex.dto)||exifTime(ex.dt),guess=false;
-  if(!t){const d=new Date(f.lastModified);t=Date.UTC(d.getFullYear(),d.getMonth(),d.getDate(),d.getHours(),d.getMinutes(),d.getSeconds());guess=true}
-  return newItem({file:f,t,guess,lat:ex.lat??null,lon:ex.lon??null,model:[ex.make,ex.model].filter(Boolean).join(' ').replace(/^(\w+) \1/,'$1'),thumb:atlasPut(thumb),...analyze(thumb)});
+  const wall=exifTime(ex.dto)||exifTime(ex.dt);
+  const it=newItem({file:f,wall,inst:wall?null:f.lastModified,guess:!wall,off:parseOff(ex.off),lat:ex.lat??null,lon:ex.lon??null,model,thumb:atlasPut(thumb),...analyze(thumb)});
+  timeOf(it);return it;
 }
 function newItem(o){return Object.assign({id:uid++,x:W/2,y:H/2,s:0,a:0,fx:W/2,fy:H/2,fs:0,fa:0,tx:W/2,ty:H/2,ts:0,ta:0,t0:0,dur:1,arc:0,nx:0,ny:0,dk:0},o)}
+
+/* ---------- time zones ---------- */
+const LOCAL_OFF=-new Date().getTimezoneOffset();
+function parseOff(s){const m=/^([+-])(\d\d):?(\d\d)/.exec(s||'');return m?(m[1]==='-'?-1:1)*(+m[2]*60+ +m[3]):null}
+const fmtTz=m=>`UTC${m<0?'−':'+'}${pad(Math.floor(Math.abs(m)/60))}:${pad(Math.abs(m)%60)}`;
+const camKey=p=>p.model||'撮影情報なし';
+function camOf(p){const k=camKey(p);return S.cams[k]||(S.cams[k]={tz:'auto',shift:0})}
+function timeOf(p){const c=camOf(p),D=S.dispTz??LOCAL_OFF;
+  if(p.inst!=null){p.t=p.inst+D*6e4+c.shift*6e4;return}
+  const off=c.tz==='auto'?(p.off??LOCAL_OFF):c.tz;p.t=p.wall-off*6e4+D*6e4+c.shift*6e4}
+function retimeAll(){for(const p of S.items)timeOf(p)}
+function autoDispTz(){if(S.dispTzUser)return;const m={};for(const p of S.items)if(p.off!=null)m[p.off]=(m[p.off]||0)+1;
+  const best=Object.entries(m).sort((a,b)=>b[1]-a[1])[0];S.dispTz=best?+best[0]:LOCAL_OFF}
+const TZS=[];for(let h=-12;h<=14;h++){TZS.push(h*60);if([3,4,5,9].includes(h))TZS.push(h*60+30)}TZS.push(345);TZS.sort((a,b)=>a-b);
+const tzOpts=(sel,withAuto,autoLabel)=>(withAuto?`<option value="auto"${sel==='auto'?' selected':''}>${autoLabel}</option>`:'')+TZS.map(m=>`<option value="${m}"${sel===m?' selected':''}>${fmtTz(m)}${m===540?'（日本）':''}</option>`).join('');
+function openTz(){
+  $('#dispTz').innerHTML=tzOpts(S.dispTz??LOCAL_OFF,false);
+  const g={};for(const p of S.items){const k=camKey(p);(g[k]||(g[k]={n:0,off:0,inst:0})).n++;if(p.off!=null)g[k].off++;if(p.inst!=null)g[k].inst++}
+  $('#camList').innerHTML=Object.entries(g).sort((a,b)=>b[1].n-a[1].n).map(([k,v])=>{const c=S.cams[k]||{tz:'auto',shift:0};
+    const auto=v.off?'自動（写真に記録された時差）':`自動（端末と同じ ${fmtTz(LOCAL_OFF)}）`;
+    return `<div class="cam" data-k="${k.replace(/"/g,'&quot;')}"><div class="nm">${k}</div><div class="sub">${v.n}枚 · ${v.inst===v.n?'撮影日時の記録なし（ファイルの日時を使用）':'時差の記録 '+(v.off?v.off+'枚':'なし')}</div>
+      <div class="ctl">${v.inst===v.n?'':`カメラの時計 <select class="ctz">${tzOpts(c.tz,true,auto)}</select>`} 微調整 <input class="csh" type="number" step="1" value="${c.shift}"> 分</div></div>`}).join('');
+  $('#tzp').classList.add('on')}
+function applyTz(){retimeAll();refresh(true)}
+$('#tzBtn').onclick=openTz;$('#tzClose').onclick=()=>$('#tzp').classList.remove('on');
+$('#tzp').addEventListener('click',e=>{if(e.target.id==='tzp')$('#tzp').classList.remove('on')});
+$('#dispTz').onchange=e=>{S.dispTz=+e.target.value;S.dispTzUser=true;applyTz()};
+$('#camList').addEventListener('change',e=>{const el=e.target.closest('.cam');if(!el)return;const c=S.cams[el.dataset.k]||(S.cams[el.dataset.k]={tz:'auto',shift:0});
+  if(e.target.classList.contains('ctz'))c.tz=e.target.value==='auto'?'auto':+e.target.value;
+  if(e.target.classList.contains('csh'))c.shift=+e.target.value||0;applyTz()});
 
 /* ---------- import ---------- */
 const prog=$('#prog');
@@ -214,18 +267,19 @@ async function importFiles(list){
   const files=all.filter(isJpg),other=all.filter(f=>!isJpg(f));
   const heic=other.filter(f=>/\.(heic|heif)$/i.test(f.name)).length;
   if(!files.length){showToast(`JPEGが見つかりませんでした（選択 ${all.length}件${heic?`・うちHEIC ${heic}件`:''}）`);return}
-  if(S.demo){S.items=[];S.demo=false;resetAtlas()}
-  started();let i=0,done=0,last=0;const failed=[];S.loading={done:0,total:files.length};
-  const worker=async()=>{while(i<files.length){const f=files[i++];try{S.items.push(await processFile(f))}catch(e){failed.push(f.name)}done++;S.loading.done=done;
+  if(S.demo){S.items=[];S.demo=false;resetAtlas();S.cams={};S.dispTzUser=false}
+  started();let i=0,done=0,last=0;const failed=[];let dups=0;S.loading={done:0,total:files.length};
+  const worker=async()=>{while(i<files.length){const f=files[i++];try{const it=await processFile(f);if(it)S.items.push(it);else dups++}catch(e){failed.push(f.name)}done++;S.loading.done=done;
     prog.style.opacity=1;prog.style.width=(done/files.length*100)+'%';
     const now=performance.now();if(now-last>350){last=now;refresh(false)}}};
   await Promise.all([0,1,2].map(worker));
-  S.loading=null;refresh(true);setTimeout(()=>{prog.style.opacity=0;setTimeout(()=>prog.style.width=0,600)},400);
-  const ok=files.length-failed.length;
+  S.loading=null;autoDispTz();retimeAll();refresh(true);setTimeout(()=>{prog.style.opacity=0;setTimeout(()=>prog.style.width=0,600)},400);
+  const ok=files.length-failed.length-dups;
   let msg=`${ok.toLocaleString()}枚を読み込みました（選択 ${all.length.toLocaleString()}件）`;
   if(other.length)msg+=`<br>JPEG以外のためスキップ：${other.length}件${heic?`（HEIC ${heic}件）`:''}`;
+  if(dups)msg+=`<br>重複のためスキップ：${dups}件`;
   if(failed.length)msg+=`<br>読み込めなかったJPEG：${failed.length}件　${failed.slice(0,3).join(', ')}${failed.length>3?' ほか':''}`;
-  showToast(msg,other.length||failed.length?9000:4000);
+  showToast(msg,other.length||failed.length||dups?9000:4000);
 }
 let toastT=0;
 function showToast(html,ms=5000){const t=$('#toast');t.innerHTML=html;t.classList.add('on');clearTimeout(toastT);toastT=setTimeout(()=>t.classList.remove('on'),ms)}
@@ -258,7 +312,7 @@ const STOPS={
 const PLAN=[[0,'inari',8.4,11,110],[0,'kinkaku',14,16,70],[0,'station',19,20.2,22],[1,'arashi',9,15,150],[1,'arashi',16.3,17.4,45],
   [2,'nara',10,14,105],[2,'dotonbori',18.5,21.6,90],[3,'kobe',11,16.8,85],[3,'kobe',16.9,17.9,40],[4,'hashidate',10,14,80]];
 function startDemo(){
-  S.items=[];S.demo=true;resetAtlas();started();const r=rng(7);const base=Date.UTC(2026,10,3);const specs=[];
+  S.items=[];S.demo=true;resetAtlas();S.cams={};S.seen=new Set();S.dispTz=540;S.dispTzUser=false;started();const r=rng(7);const base=Date.UTC(2026,10,3);const specs=[];
   for(const [day,key,h0,h1,cnt] of PLAN){const st=STOPS[key];const bursts=[...Array(3)].map(()=>h0+r()*(h1-h0));
     for(let i=0;i<cnt;i++){let hr=r()<.75?bursts[i%3]+gauss(r)*.15:h0+r()*(h1-h0);hr=clamp(hr,h0,h1);
       const t=base+day*864e5+hr*36e5;let hue=st.hue+gauss(r)*16,sat=st.sat*(.7+r()*.3),lit=.75+r()*.2;
@@ -269,7 +323,7 @@ function startDemo(){
       specs.push({t,cam,stop:st,p:{seed:(r()*1e9)|0,hue,sat,lit},lat:st.lat+gauss(r)*.004,lon:st.lon+gauss(r)*.005})}}
   let k=0;
   const step=()=>{const end=Math.min(specs.length,k+70);for(;k<end;k++){const s=specs[k];const c=document.createElement('canvas');c.width=c.height=TH;paint(c.getContext('2d',{willReadFrequently:true}),TH,TH,s.p);
-      S.items.push(newItem({t:s.t,demo:s.p,thumb:atlasPut(c),lat:s.cam?null:s.lat,lon:s.cam?null:s.lon,model:s.cam?'FUJIFILM X-T5':'Apple iPhone 16 Pro',place:s.stop.n,...analyze(c)}))}
+      S.items.push(newItem({t:s.t,wall:s.t,off:540,demo:s.p,thumb:atlasPut(c),lat:s.cam?null:s.lat,lon:s.cam?null:s.lon,model:s.cam?'FUJIFILM X-T5':'Apple iPhone 16 Pro',place:s.stop.n,...analyze(c)}))}
     prog.style.opacity=1;prog.style.width=(k/specs.length*100)+'%';
     refresh(k>=specs.length);if(k<specs.length)setTimeout(step,60);else setTimeout(()=>{prog.style.opacity=0;setTimeout(()=>prog.style.width=0,600)},300)};
   step();
@@ -361,7 +415,7 @@ function updateText(){
   const it=S.items;if(!it.length)return;
   const g=it.filter(p=>p.lat!=null).length;
   const days=new Set(it.map(p=>Math.floor(p.t/864e5))).size;
-  $('#stats').textContent=(S.loading?`LOADING ${S.loading.done}/${S.loading.total} · `:'')+`${it.length.toLocaleString()} PHOTOS · ${fmtDay(it[0].t)}–${fmtDay(it.at(-1).t)} · ${days} DAYS · GPS ${g}`;
+  $('#stats').textContent=(S.loading?`LOADING ${S.loading.done}/${S.loading.total} · `:'')+`${it.length.toLocaleString()} PHOTOS · ${fmtDay(it[0].t)}–${fmtDay(it.at(-1).t)} · ${days} DAYS · GPS ${g} · ${fmtTz(S.dispTz??LOCAL_OFF)}`;
   const el=$('#insight');el.classList.add('out');clearTimeout(txtTimer);
   txtTimer=setTimeout(()=>{el.innerHTML=insight();el.classList.remove('out')},220);
 }
